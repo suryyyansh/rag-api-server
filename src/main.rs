@@ -1,6 +1,7 @@
 mod backend;
 mod error;
 mod utils;
+mod search;
 
 use anyhow::Result;
 use chat_prompts::{MergeRagContextPolicy, PromptTemplateType};
@@ -14,7 +15,8 @@ use hyper::{
 use llama_core::MetadataBuilder;
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use crate::search::{tavily_api::TavilyAPISearch, CURRENT_SEARCH_API, Query};
 use utils::{is_valid_url, log, qdrant_up};
 
 type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
@@ -100,6 +102,14 @@ struct Cli {
     /// Root path for the Web UI files
     #[arg(long, default_value = "chatbot-ui")]
     web_ui: PathBuf,
+
+    // Search API specific
+    // API Key (for when an API service requires one)
+    #[arg(long, default_value = "")]
+    search_api_key: String,
+    // Maximum results to use
+    #[arg(long, default_value = "5", value_parser = clap::value_parser!(i32))]
+    max_search_results: i32,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -198,7 +208,29 @@ async fn main() -> Result<(), ServerError> {
         )));
     }
 
-    log(format!("[INFO] Qdrant found at: {}", &cli.qdrant_url));
+    log(format!("[INFO] Qdrant found at: {}", cli.qdrant_url));
+
+    log(format!("[SEARCH] Found key: {}", cli.search_api_key));
+    log(format!("[SEARCH] Max results: {}", cli.max_search_results));
+
+
+    //FIXME: TESTING SPACE
+    let tavily: Arc<dyn Query> = Arc::new(TavilyAPISearch {
+        api_key: cli.search_api_key,
+        max_search_results: cli.max_search_results,
+    });
+    let _ = CURRENT_SEARCH_API.set(tavily);
+
+   // match CURRENT_SEARCH_API.get().expect("CURRENT_SEARCH_API is unset.").search("nintendo3ds".to_string()).await {
+   //     Ok(body) => {
+   //         log(format!("[SEARCH] Output: {}", body));
+   //     },
+   //     Err(e) => return Err(ServerError::SearchError(format!(
+   //         "[SEARCH] Search error: {}",
+   //         e
+   //     ))),
+   // }
+
 
     log(format!(
         "[INFO] Qdrant collection name: {}",
@@ -365,6 +397,7 @@ async fn main() -> Result<(), ServerError> {
         Ok(_) => Ok(()),
         Err(e) => Err(ServerError::Operation(e.to_string())),
     }
+
 }
 
 async fn handle_request(

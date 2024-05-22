@@ -2,6 +2,7 @@ use crate::{
     error,
     utils::{gen_chat_id, print_log_begin_separator, print_log_end_separator},
     GLOBAL_RAG_PROMPT, SERVER_INFO,
+    search::CURRENT_SEARCH_API
 };
 use chat_prompts::{error as ChatPromptsError, MergeRagContext, MergeRagContextPolicy};
 use endpoints::{
@@ -320,7 +321,7 @@ pub(crate) async fn rag_query_handler(
     };
 
     println!("\n[+] Computing embeddings for user query ...");
-
+    let query_text: &String;
     // * compute embeddings for user query
     let embedding_response = match chat_request.messages.is_empty() {
         true => return error::bad_request("Messages should not be empty"),
@@ -328,7 +329,7 @@ pub(crate) async fn rag_query_handler(
             let last_message = chat_request.messages.last().unwrap();
             match last_message {
                 ChatCompletionRequestMessage::User(user_message) => {
-                    let query_text = match user_message.content() {
+                    query_text = match user_message.content() {
                         ChatCompletionUserMessageContent::Text(text) => text,
                         _ => {
                             return error::bad_request(
@@ -380,79 +381,129 @@ pub(crate) async fn rag_query_handler(
         None => return error::internal_server_error("No embeddings returned"),
     };
 
-    println!("\n[+] Retrieving context ...");
+    // * check if query starts with [SEARCH]
+    //   * if it does, switch to search context and DONT 
+    //     let it use embeddings
 
-    // * retrieve context
-    let ro = match llama_core::rag::rag_retrieve_context(
-        query_embedding.as_slice(),
-        server_info.qdrant_config.url.to_string().as_str(),
-        server_info.qdrant_config.collection_name.as_str(),
-        server_info.qdrant_config.limit as usize,
-        Some(server_info.qdrant_config.score_threshold),
-    )
-    .await
-    {
-        Ok(search_result) => search_result,
+    if chat_request.messages.is_empty() {
+        return error::internal_server_error("No message in the chat request.");
+    }
+
+    let prompt_template = match llama_core::utils::chat_prompt_template(
+        chat_request.model.as_deref(),
+    ) {
+        Ok(prompt_template) => prompt_template,
         Err(e) => {
             return error::internal_server_error(e.to_string());
         }
     };
 
-    match ro.points {
-        Some(scored_points) => {
-            match scored_points.is_empty() {
-                true => {
-                    println!(
-                        "    * No point retrieved (score < threshold {})",
-                        server_info.qdrant_config.score_threshold
-                    );
-                    println!("\n[+] Answer the user query ...");
-                }
-                false => {
-                    // update messages with retrieved context
-                    let mut context = String::new();
-                    for (idx, point) in scored_points.iter().enumerate() {
-                        println!("    * Point {}: score: {}", idx, point.score);
-                        println!("      Source: {}", &point.source);
+    let mut context: String = "".to_string();
+    if query_text.starts_with("[SEARCH]") {
 
-                        context.push_str(&point.source);
-                        context.push_str("\n\n");
+        println!("[SEARCH] query without search: {}", query_text.to_string().strip_prefix("[SEARCH]").unwrap());
+        let query_cleaned = query_text.to_string().strip_prefix("[SEARCH]").unwrap().to_string();
+
+        context = get_searched_context(query_cleaned).await;
+
+    } else {
+
+        println!("\n[+] Retrieving context ...");
+
+        // * retrieve context
+        let ro = match llama_core::rag::rag_retrieve_context(
+            query_embedding.as_slice(),
+            server_info.qdrant_config.url.to_string().as_str(),
+            server_info.qdrant_config.collection_name.as_str(),
+            server_info.qdrant_config.limit as usize,
+            Some(server_info.qdrant_config.score_threshold),
+        )
+        .await
+        {
+            Ok(search_result) => search_result,
+            Err(e) => {
+                return error::internal_server_error(e.to_string());
+            }
+        };
+
+        //return error::internal_server_error("*********** DEBUGGING **************");
+
+        match ro.points {
+            Some(scored_points) => {
+                match scored_points.is_empty() {
+                    true => {
+                        println!(
+                            "    * No point retrieved (score < threshold {})",
+                            server_info.qdrant_config.score_threshold
+                        );
+                        println!("\n[+] Answer the user query ...");
                     }
+                    false => {
+                        // update messages with retrieved context
+                        let mut context = String::new();
+                        for (idx, point) in scored_points.iter().enumerate() {
+                            println!("    * Point {}: score: {}", idx, point.score);
+                            println!("      Source: {}", &point.source);
 
-                    if chat_request.messages.is_empty() {
-                        return error::internal_server_error("No message in the chat request.");
-                    }
-
-                    let prompt_template = match llama_core::utils::chat_prompt_template(
-                        chat_request.model.as_deref(),
-                    ) {
-                        Ok(prompt_template) => prompt_template,
-                        Err(e) => {
-                            return error::internal_server_error(e.to_string());
+                            context.push_str(&point.source);
+                            context.push_str("\n\n");
                         }
-                    };
 
-                    // insert rag context into chat request
-                    if let Err(e) = RagPromptBuilder::build(
-                        &mut chat_request.messages,
-                        &[context],
-                        prompt_template.has_system_prompt(),
-                        server_info.rag_config.policy,
-                    ) {
-                        return error::internal_server_error(e.to_string());
+                        // if chat_request.messages.is_empty() {
+                        //     return error::internal_server_error("No message in the chat request.");
+                        // }
+
+                        // let prompt_template = match llama_core::utils::chat_prompt_template(
+                        //     chat_request.model.as_deref(),
+                        // ) {
+                        //     Ok(prompt_template) => prompt_template,
+                        //     Err(e) => {
+                        //         return error::internal_server_error(e.to_string());
+                        //     }
+                        // };
+
+                        // insert rag context into chat request
+                        //if let Err(e) = RagPromptBuilder::build(
+                        //    &mut chat_request.messages,
+                        //    &[context],
+                        //    prompt_template.has_system_prompt(),
+                        //    server_info.rag_config.policy,
+                        //) {
+                        //    return error::internal_server_error(e.to_string());
+                        //}
+
+                        println!("\n[+] Answer the user query with the context info ...");
                     }
-
-                    println!("\n[+] Answer the user query with the context info ...");
                 }
             }
+            None => {
+
+                // * no points retrieved, probably means an entirely new question has been posed,
+                // meaning all the context to ask the question is *probably* inside the chat message.
+                // simply query the chat message online.
+                
+
+                println!(
+                    "    * No point retrieved (score < threshold {})",
+                    server_info.qdrant_config.score_threshold
+                );
+
+                println!("[SEARCH] No points retrieved from qdrant. Switching over to web search.");
+                context = get_searched_context(query_text.to_string()).await;
+
+                println!("\n[+] Answer the user query ...");
+            }
         }
-        None => {
-            println!(
-                "    * No point retrieved (score < threshold {})",
-                server_info.qdrant_config.score_threshold
-            );
-            println!("\n[+] Answer the user query ...");
-        }
+    }
+    //FIXME: aggregate search results
+
+    if let Err(e) = RagPromptBuilder::build(
+        &mut chat_request.messages,
+        &[context],
+        prompt_template.has_system_prompt(),
+        server_info.rag_config.policy,
+    ) {
+        return error::internal_server_error(e.to_string());
     }
 
     // chat completion
@@ -465,6 +516,28 @@ pub(crate) async fn rag_query_handler(
 
     res
 }
+
+async fn get_searched_context(query: String) -> String {
+
+    let results_json = match CURRENT_SEARCH_API.get().expect("Search API not set.").search(query).await {
+        Ok(results) => {
+            results.to_string()
+        }
+        Err(_) => "No search results returned".to_string(),
+    };
+
+    //let results: String = serde_json::from_str::<serde_json::Value>(&results_json).unwrap().get("results").unwrap().to_string();
+
+    let searched_context: String = serde_json::from_str::<Vec<serde_json::Value>>(&results_json)
+        .unwrap().into_iter()
+        .filter_map(|item| item.get("content").and_then(|c: &serde_json::Value| c.as_str()).map(String::from))
+        .collect::<Vec<String>>().join("\n\n");
+
+    println!("[SEARCH] collected results: {}", searched_context);
+
+    searched_context
+} 
+
 
 #[derive(Debug, Default)]
 struct RagPromptBuilder;

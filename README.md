@@ -388,6 +388,22 @@ If the command runs successfully, you should see the similar output as below in 
 
 </details>
 
+</details>
+
+#### `/v1/search` endpoint
+
+`/v1/search` endpoint sends a query and gets the search results from the tavily search API using your supplied API key in the launch parameters.
+
+<details> <summary> Example </summary>
+
+You can use `curl` to test it on a new terminal:
+
+```bash
+curl -X POST http://localhost:8080/v1/search \
+    -H 'Content-Type: application/json' \
+    -d '{"query":"<your query>"}'
+```
+</details>
 
 ## Setup
 
@@ -538,7 +554,9 @@ For the purpose of demonstration, we use the [Llama-2-7b-chat-hf-Q5_K_M.gguf](ht
       --model-name Llama-2-7b-chat-hf-Q5_K_M,all-MiniLM-L6-v2-ggml-model-f16 \
       --ctx-size 4096,384 \
       --prompt-template llama-2-chat \
-      --rag-prompt "Use the following pieces of context to answer the user's question.\nIf you don't know the answer, just say that you don't know, don't try to make up an answer.\n----------------\n" \
+      --rag-prompt "Use the following pieces of context to answer the user's question.\nIf you don't know the answer, just say that you don't know, don't try to make up an answer.\n----------------\n" \ 
+      --max-search-results 10 \
+      --search-api-key "<insert-your-api-key>" # Currently, only Tavily is supported, but feel free to add more by implementing the Query trait.
       --log-prompts \
       --log-stat
   ```
@@ -560,4 +578,13 @@ For the purpose of demonstration, we use the [Llama-2-7b-chat-hf-Q5_K_M.gguf](ht
         -H 'accept:application/json' \
         -H 'Content-Type: application/json' \
         -d '{"messages":[{"role":"system", "content": "You are a helpful assistant."}, {"role":"user", "content": "What is the location of Paris, France along the Seine River?"}], "model":"Llama-2-7b-chat-hf-Q5_K_M"}'
+    ```
+
+- Ask with search by either asking a question that results in the use of none of the embeddings, or prepend with "[SEARCH]". The following question results in the use of search with or without the "[SEARCH]" term.
+
+    ```bash
+    curl -X POST http://localhost:8080/v1/chat/completions \
+        -H 'accept:application/json' \
+        -H 'Content-Type: application/json' \
+        -d '{"messages":[{"role":"system", "content": "You are a helpful assistant."}, {"role":"user", "content": "[SEARCH] Who is the main protagonist of shin megami tensei if?"}], "model":"Llama-2-7b-chat-hf-Q5_K_M"}'
     ```
