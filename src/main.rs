@@ -214,23 +214,14 @@ async fn main() -> Result<(), ServerError> {
     log(format!("[SEARCH] Max results: {}", cli.max_search_results));
 
 
-    //FIXME: TESTING SPACE
+    //FIXME: TESTING SPACE FOR DEMONSTRATIONAL PURPOSES
     let tavily: Arc<dyn Query> = Arc::new(TavilyAPISearch {
         api_key: cli.search_api_key,
         max_search_results: cli.max_search_results,
     });
+    
+    // can easily implement logic to set this at execution time
     let _ = CURRENT_SEARCH_API.set(tavily);
-
-   // match CURRENT_SEARCH_API.get().expect("CURRENT_SEARCH_API is unset.").search("nintendo3ds".to_string()).await {
-   //     Ok(body) => {
-   //         log(format!("[SEARCH] Output: {}", body));
-   //     },
-   //     Err(e) => return Err(ServerError::SearchError(format!(
-   //         "[SEARCH] Search error: {}",
-   //         e
-   //     ))),
-   // }
-
 
     log(format!(
         "[INFO] Qdrant collection name: {}",

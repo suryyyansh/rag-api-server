@@ -80,6 +80,4 @@ pub enum ServerError {
     Operation(String),
     #[error("{0}")]
     NoDatabaseError(String),
-    #[error("{0}")]
-    SearchError(String),
 }

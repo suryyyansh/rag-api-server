@@ -398,7 +398,9 @@ pub(crate) async fn rag_query_handler(
         }
     };
 
+    // get ready for context
     let mut context: String = "".to_string();
+    // handle SEARCH case 
     if query_text.starts_with("[SEARCH]") {
 
         println!("[SEARCH] query without search: {}", query_text.to_string().strip_prefix("[SEARCH]").unwrap());
@@ -426,8 +428,6 @@ pub(crate) async fn rag_query_handler(
             }
         };
 
-        //return error::internal_server_error("*********** DEBUGGING **************");
-
         match ro.points {
             Some(scored_points) => {
                 match scored_points.is_empty() {
@@ -448,29 +448,6 @@ pub(crate) async fn rag_query_handler(
                             context.push_str(&point.source);
                             context.push_str("\n\n");
                         }
-
-                        // if chat_request.messages.is_empty() {
-                        //     return error::internal_server_error("No message in the chat request.");
-                        // }
-
-                        // let prompt_template = match llama_core::utils::chat_prompt_template(
-                        //     chat_request.model.as_deref(),
-                        // ) {
-                        //     Ok(prompt_template) => prompt_template,
-                        //     Err(e) => {
-                        //         return error::internal_server_error(e.to_string());
-                        //     }
-                        // };
-
-                        // insert rag context into chat request
-                        //if let Err(e) = RagPromptBuilder::build(
-                        //    &mut chat_request.messages,
-                        //    &[context],
-                        //    prompt_template.has_system_prompt(),
-                        //    server_info.rag_config.policy,
-                        //) {
-                        //    return error::internal_server_error(e.to_string());
-                        //}
 
                         println!("\n[+] Answer the user query with the context info ...");
                     }
@@ -495,8 +472,8 @@ pub(crate) async fn rag_query_handler(
             }
         }
     }
-    //FIXME: aggregate search results
 
+    // * build RAG prompt using embeddings or search results
     if let Err(e) = RagPromptBuilder::build(
         &mut chat_request.messages,
         &[context],
@@ -526,8 +503,7 @@ async fn get_searched_context(query: String) -> String {
         Err(_) => "No search results returned".to_string(),
     };
 
-    //let results: String = serde_json::from_str::<serde_json::Value>(&results_json).unwrap().get("results").unwrap().to_string();
-
+    // * extracting content out of json results.
     let searched_context: String = serde_json::from_str::<Vec<serde_json::Value>>(&results_json)
         .unwrap().into_iter()
         .filter_map(|item| item.get("content").and_then(|c: &serde_json::Value| c.as_str()).map(String::from))
