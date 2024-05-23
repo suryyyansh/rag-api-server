@@ -1,3 +1,5 @@
+### Be sure to use your tavily API key using `--search-api-key`
+
 # LlamaEdge-RAG API Server
 
 <!-- @import "[TOC]" {cmd="toc" depthFrom=1 depthTo=6 orderedList=false} -->
